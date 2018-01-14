@@ -2,6 +2,25 @@ from xml.dom import minidom
 from ortools.constraint_solver import pywrapcp
 from ortools.constraint_solver import routing_enums_pb2
 from datetime import datetime, timedelta
+import numpy as np
+
+
+class CreateTravelTimeCallback(object):
+    def __init__(self, locations):
+        self.locations = locations
+
+    def TravelTime(self, from_node, to_node):
+        for location in self.locations:
+            if(int(location.idx) == from_node):
+                for travel_data in location.travel_data:
+                    if(int(travel_data.location_idx) == to_node):
+                        return int(travel_data.kms)
+class CreateDemandCallback(object):
+    def __init__(self, demands):
+        self.demands = demands
+
+    def Demand(self, from_node, to_node):
+        return self.demands[to_node]
 
 class TravelData():
     def __init__(self, location_idx, kms, time):
@@ -63,7 +82,18 @@ class Fleet():
         self.preferred_locations = preferred_locations
         self.section = section
 
+# Create total_time callback (equals service time plus travel time).
+class CreateTotalTimeCallback(object):
+  """Create callback to get total times between locations."""
 
+  def __init__(self, service_time_callback, travel_time_callback):
+    self.service_time_callback = service_time_callback
+    self.travel_time_callback = travel_time_callback
+
+  def TotalTime(self, from_node, to_node):
+    service_time = self.service_time_callback(from_node, to_node)
+    travel_time = self.travel_time_callback(from_node, to_node)
+    return service_time + travel_time
 
 def get_data(xml):
     xmldoc = minidom.parse(xml)
@@ -74,35 +104,37 @@ def get_data(xml):
 
     locations = []
     for xmllocation in xmllocations:
-        idx = xmllocation.getAttribute('idx')
-        id = xmllocation.getAttribute('id')
-        is_DC = xmllocation.getAttribute('is_DC')
+        idx = int(xmllocation.getAttribute('idx'))
+        id = int(xmllocation.getAttribute('id'))
+        is_DC = False
+        if xmllocation.getAttribute('is_DC') == 'true':
+            is_DC = True
         preferred_fleet = xmllocation.getAttribute('preferred_fleet').split(' ')
         locorders = xmllocation.getAttribute('orders').split(' ')
         xmltraveldata = xmllocation.getElementsByTagName('Travel_Info')
         traveldata = []
         for xmltravelinfo in xmltraveldata:
-            location_idx = xmltravelinfo.getAttribute('location_idx')
-            kms = xmltravelinfo.getAttribute('kms')
-            time = xmltravelinfo.getAttribute('time')
+            location_idx = int(xmltravelinfo.getAttribute('location_idx'))
+            kms = float(xmltravelinfo.getAttribute('kms'))
+            time = int(xmltravelinfo.getAttribute('time'))
             traveldata.append(TravelData(location_idx, kms, time))
 
         locations.append(Location(idx, id, is_DC, preferred_fleet, locorders, traveldata))
 
     orders = []
     for xmlorder in xmlorders:
-        idx = xmlorder.getAttribute('idx')
-        id = xmlorder.getAttribute('id')
-        location_from = xmlorder.getAttribute('location_from')
-        location_to = xmlorder.getAttribute('location_to')
-        delivery_start = xmlorder.getAttribute('delivery_start')
-        delivery_end = xmlorder.getAttribute('delivery_end')
-        priority = xmlorder.getAttribute('priority')
-        min_temp = xmlorder.getAttribute('min_temp')
-        max_temp = xmlorder.getAttribute('max_temp')
-        pallet_type_idx = xmlorder.getAttribute('pallet_type_idx')
-        pallet_quantity = xmlorder.getAttribute('pallet_quantity')
-        weight_per_pallet = xmlorder.getAttribute('weight_per_pallet')
+        idx = int(xmlorder.getAttribute('idx'))
+        id = int(xmlorder.getAttribute('id'))
+        location_from = int(xmlorder.getAttribute('location_from'))
+        location_to = int(xmlorder.getAttribute('location_to'))
+        delivery_start = int(xmlorder.getAttribute('delivery_start'))
+        delivery_end = int(xmlorder.getAttribute('delivery_end'))
+        priority = int(xmlorder.getAttribute('priority'))
+        min_temp = int(xmlorder.getAttribute('min_temp'))
+        max_temp = int(xmlorder.getAttribute('max_temp'))
+        pallet_type_idx = int(xmlorder.getAttribute('pallet_type_idx'))
+        pallet_quantity = int(xmlorder.getAttribute('pallet_quantity'))
+        weight_per_pallet = int(xmlorder.getAttribute('weight_per_pallet'))
         orders.append(Order(idx, id, location_from, location_to,
                             delivery_start, delivery_end, priority,
                             min_temp, max_temp, pallet_type_idx,
@@ -110,11 +142,11 @@ def get_data(xml):
 
     pallets = []
     for xmlpallet in xmlpallets :
-        idx = xmlpallet.getAttribute('idx')
-        type = xmlpallet.getAttribute('type')
-        length = xmlpallet.getAttribute('length')
-        width = xmlpallet.getAttribute('width')
-        height = xmlpallet.getAttribute('height')
+        idx = int(xmlpallet.getAttribute('idx'))
+        type = int(xmlpallet.getAttribute('type'))
+        length = int(xmlpallet.getAttribute('length'))
+        width = int(xmlpallet.getAttribute('width'))
+        height = int(xmlpallet.getAttribute('height'))
         ratio_to_stdPallet = xmlpallet.getAttribute('ratio_to_stdPallet')
         pallets.append(Pallet(idx, type, length, width, height, ratio_to_stdPallet))
 
@@ -151,6 +183,49 @@ def get_demands(locations, orders):
                 demands[id] += 1
 
     return demands
+
+def get_capacities(fleets, pallets):
+    capacities = []
+    for fleet in fleets:
+        capacities.append(int(float(fleet.section.capacity_in_stdPallets)/float(1)))
+    return capacities
+
+def get_costs(fleets):
+    costs = []
+    for fleet in fleets:
+        costs.append(float(fleet.cost_per_km))
+    return costs
+
+def get_distance(a, b, locations):
+    for location in locations:
+        if(int(location.idx) == a):
+            for travel_data in location.travel_data:
+                if(int(travel_data.location_idx) == b):
+                    return int(travel_data.kms)
+    return None
+
+def get_distance_matrix(locations):
+    distmat = {}
+    for a, location in enumerate(locations):
+        distmat[a] = {}
+        for b, travel_data in enumerate(location.travel_data):
+            print a
+            print b
+            distmat[a][b] = 0
+    for location in locations:
+        for travel_data in location.travel_data:
+            print travel_data.location_idx
+            distmat[int(location.idx)][int(travel_data.location_idx)] = float(travel_data.kms)
+
+    return distmat
+
+
+def get_time(a, b, locations):
+    for location in locations:
+        if(int(location.idx) == a):
+            if(int(location.travel_data.location_idx) == b):
+                return int(location.travel_data.time)
+    return None
 
 def get_DC_index(locations):
     for id, location in enumerate(locations):
@@ -213,10 +288,41 @@ def get_start_index(fleets):
 
 def main():
     [locations, orders, pallets, fleets] = get_data('ziwl_data.xml')
-    print get_demands(locations, orders)
+    demands = get_demands(locations, orders)
+    service_time_per_demand = 10
+    capacity = get_capacities(fleets, pallets)
+
+    def service_time_callback(from_node, to_node):
+        return (demands[to_node] * service_time_per_demand)
+
+    def travel_time_callback(from_node, to_node):
+        for location in locations:
+            if(int(location.idx) == from_node):
+                for travel_data in location.travel_data:
+                    if(int(travel_data.location_idx) == to_node):
+                        return int(travel_data.time)
+
+        return int(0)
+
+    def demand_callback(from_node, to_node):
+        return demands[to_node]
+
+    def distance_callback(from_node, to_node):
+        for location in locations:
+            if (int(location.idx) == from_node):
+                for travel_data in location.travel_data:
+                    if (int(travel_data.location_idx) == to_node):
+                        return int(travel_data.kms)
+        return int(0)
+
+    def total_time_callback(from_node, to_node):
+        return service_time_callback(from_node, to_node) + travel_time_callback(from_node, to_node)
 
     model_parameters = pywrapcp.RoutingModel.DefaultModelParameters()
-    routing = pywrapcp.RoutingModel(len(locations), len(fleets), get_start_index(fleets), get_start_index(fleets), model_parameters)
+    print capacity
+    print demands
+    routing = pywrapcp.RoutingModel(len(locations), len(fleets), get_start_index(fleets), get_start_index(fleets),
+                                    model_parameters)
     parameters = routing.DefaultSearchParameters()
 
     # Setting first solution heuristic (cheapest addition).
@@ -234,8 +340,33 @@ def main():
 
     # Set the cost function (distance callback) for each arc, homogenious for
     # all vehicles.
+    routing.SetArcCostEvaluatorOfAllVehicles(distance_callback)
+
     for fleet in fleets:
         routing.SetFixedCostOfVehicle(int(float(fleet.cost_per_km)), int(fleet.idx))
+
+    null_capacity_slack = 0
+    routing.AddDimensionWithVehicleCapacity(demand_callback,  # demand callback
+                                            null_capacity_slack,
+                                            capacity,  # capacity array
+                                            True,
+                                            "Capacity")
+    routing.AddDimension(total_time_callback,  # total time function callback
+                         24 * 60 * 2,
+                         24 * 60 * 2,
+                         True,
+                         "Time")
+
+    assignment = routing.SolveWithParameters(parameters)
+    print assignment
+
+    if assignment:
+        print('The Objective Value is {0}'.format(assignment.ObjectiveValue()))
+
+        plan_output, dropped = route_output_string(routing, assignment)
+        print(plan_output)
+        print('dropped nodes: ' + ', '.join(dropped))
+
 
 if __name__ == '__main__':
     main()
