@@ -28,7 +28,8 @@ class TravelData():
         self.kms = kms
         self.time = time
 
-class Location():
+
+class Location:
     def __init__(self, idx, id, is_DC, preferred_fleet, orders, travel_data):
         self.idx = idx
         self.id = id
@@ -37,7 +38,8 @@ class Location():
         self.orders = orders
         self.travel_data = travel_data
 
-class Order():
+
+class Order:
     def __init__(self, idx, id, location_from, location_to,
                  delivery_start, delivery_end, priority,
                  min_temp, max_temp, pallet_type_idx,
@@ -55,7 +57,8 @@ class Order():
         self.pallet_quantity = pallet_quantity
         self.weight_per_pallet = weight_per_pallet
 
-class Pallet():
+
+class Pallet:
     def __init__(self, idx, type, length, width, height, ratio_to_stdPallet):
         self.idx = idx
         self.type = type
@@ -64,14 +67,15 @@ class Pallet():
         self.height = height
         self.ratio_to_stdPallet = ratio_to_stdPallet
 
-class Section():
+
+class Section:
     def __init__(self, min_temp, max_temp, capacity_in_stdPallets):
         self.min_temp = min_temp
         self.max_temp = max_temp
         self.capacity_in_stdPallets = capacity_in_stdPallets
 
 
-class Fleet():
+class Fleet:
     def __init__(self, idx, id, cost_per_km, max_weight, max_kms, loading_from_side, preferred_locations, section):
         self.idx = idx
         self.id = id
@@ -301,8 +305,9 @@ def main():
                 for travel_data in location.travel_data:
                     if(int(travel_data.location_idx) == to_node):
                         return int(travel_data.time)
+                    else:
+                        return int(0)
 
-        return int(0)
 
     def demand_callback(from_node, to_node):
         return demands[to_node]
@@ -313,14 +318,15 @@ def main():
                 for travel_data in location.travel_data:
                     if (int(travel_data.location_idx) == to_node):
                         return int(travel_data.kms)
-        return int(0)
+                    else:
+                        return int(0)
 
     def total_time_callback(from_node, to_node):
         return service_time_callback(from_node, to_node) + travel_time_callback(from_node, to_node)
 
     model_parameters = pywrapcp.RoutingModel.DefaultModelParameters()
-    print capacity
-    print demands
+    print len(locations)
+    print len(fleets)
     routing = pywrapcp.RoutingModel(len(locations), len(fleets), get_start_index(fleets), get_start_index(fleets),
                                     model_parameters)
     parameters = routing.DefaultSearchParameters()
@@ -336,7 +342,7 @@ def main():
 
     parameters.time_limit_ms = 10 * 1000  # 10 seconds
     parameters.use_light_propagation = False
-    # parameters.log_search = True
+    parameters.log_search = True
 
     # Set the cost function (distance callback) for each arc, homogenious for
     # all vehicles.
@@ -352,20 +358,54 @@ def main():
                                             True,
                                             "Capacity")
     routing.AddDimension(total_time_callback,  # total time function callback
-                         24 * 60 * 2,
-                         24 * 60 * 2,
+                         24 * 60 ** 2,
+                         24 * 60 ** 2,
                          True,
                          "Time")
 
     assignment = routing.SolveWithParameters(parameters)
-    print assignment
-
     if assignment:
-        print('The Objective Value is {0}'.format(assignment.ObjectiveValue()))
+        # Display solution.
+        # Solution cost.
+        print "Total distance of all routes: " + str(assignment.ObjectiveValue()) + "\n"
 
-        plan_output, dropped = route_output_string(routing, assignment)
-        print(plan_output)
-        print('dropped nodes: ' + ', '.join(dropped))
+        for vehicle_nbr in range(30):
+            index = routing.Start(vehicle_nbr)
+            index_next = assignment.Value(routing.NextVar(index))
+            route = ''
+            route_dist = 0
+            route_demand = 0
+
+            while not routing.IsEnd(index_next):
+                node_index = routing.IndexToNode(index)
+                node_index_next = routing.IndexToNode(index_next)
+                route += str(node_index) + " -> "
+                # Add the distance to the next node.
+                route_dist += distance_callback(node_index, node_index_next)
+                # Add demand.
+                route_demand += demands[node_index_next]
+                index = index_next
+                index_next = assignment.Value(routing.NextVar(index))
+
+            node_index = routing.IndexToNode(index)
+            node_index_next = routing.IndexToNode(index_next)
+            route += str(node_index) + " -> " + str(node_index_next)
+            route_dist += distance_callback(node_index, node_index_next)
+            print "Route for vehicle " + str(vehicle_nbr) + ":\n\n" + route + "\n"
+            print "Distance of route " + str(vehicle_nbr) + ": " + str(route_dist)
+            print "Demand met by vehicle " + str(vehicle_nbr) + ": " + str(route_demand) + "\n"
+        #else:
+            #print 'No solution found.'
+    else:
+        print 'Specify an instance greater than 0.'
+    # print assignment
+    #
+    # if assignment:
+    #     print('The Objective Value is {0}'.format(assignment.ObjectiveValue()))
+    #
+    #     plan_output, dropped = route_output_string(routing, assignment)
+    #     print(plan_output)
+    #     print('dropped nodes: ' + ', '.join(dropped))
 
 
 if __name__ == '__main__':
